@@ -1,133 +1,107 @@
 package fr.lernejo.file;
 
-import java.io.*;
-import java.nio.file.*;
-import java.time.LocalDateTime;
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.DecimalFormat;
+import java.text.ParseException;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.stream.Stream;
+import java.util.ArrayList;
+import java.util.List;
 
 public class CsvReader {
 
     public static void main(String[] args) {
-        if (args.length != 6) {
-            System.out.println("Usage: <path-to-csv> <start-date> <end-date> <metric> <NIGHT/DAY> <SUM/AVG/MIN/MAX>");
-            System.exit(1);
+        if (args.length != 5) {
+            if (args.length == 0) {
+                System.out.println("Missing argument");
+                System.exit(3);
+            } else {
+                System.out.println("Too many arguments");
+                System.exit(4);
+            }
         }
 
-        String csvFilePath = args[0];
+        String filePath = args[0];
         String startDateStr = args[1];
         String endDateStr = args[2];
         String metric = args[3];
-        String dayNightSelector = args[4];
-        String aggregationType = args[5];
+        String aggregation = args[4];
 
-        try (BufferedReader reader = Files.newBufferedReader(Paths.get(csvFilePath))) {
-            // Parse start and end dates
-            LocalDateTime startDate = LocalDateTime.parse(startDateStr + "T00:00");
-            LocalDateTime endDate = LocalDateTime.parse(endDateStr + "T00:00");
-
-            // Map of metric to the corresponding CSV column
-            Map<String, Integer> metricColumnMap = Map.of(
-                "temperature_2m", 1,
-                "pressure_msl", 3,
-                "wind_speed_10m", 5,
-                "direct_normal_irradiance_instant", 8
-            );
-
-            if (!metricColumnMap.containsKey(metric)) {
-                System.out.println("Invalid metric");
-                System.exit(2);
-            }
-
-            int metricColumnIndex = metricColumnMap.get(metric);
-            boolean dayFilter = dayNightSelector.equalsIgnoreCase("DAY");
-
-            double sum = 0.0;
-            double min = Double.MAX_VALUE;
-            double max = Double.MIN_VALUE;
-            int count = 0;
-
-            String line;
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
-
-            // Skip the first 4 lines (preamble + headers)
-            for (int i = 0; i < 4; i++) {
-                reader.readLine();
-            }
-
-            while ((line = reader.readLine()) != null) {
-                String[] columns = line.split(",");
-
-                LocalDateTime timestamp = LocalDateTime.parse(columns[0], formatter);
-
-                // Filter by date range and day/night
-                if (timestamp.isBefore(startDate) || !timestamp.isBefore(endDate)) {
-                    continue;
-                }
-
-                int isDay = Integer.parseInt(columns[7]);
-                if ((dayFilter && isDay == 0) || (!dayFilter && isDay == 1)) {
-                    continue;
-                }
-
-                // Collect the metric value
-                double value = Double.parseDouble(columns[metricColumnIndex]);
-
-                // Perform aggregation incrementally to save memory
-                sum += value;
-                if (value < min) {
-                    min = value;
-                }
-                if (value > max) {
-                    max = value;
-                }
-                count++;
-            }
-
-            // Calculate the final result based on the aggregation type
-            double result = 0.0;
-            switch (aggregationType.toUpperCase()) {
-                case "SUM":
-                    result = sum;
-                    break;
-                case "AVG":
-                    result = count == 0 ? 0 : sum / count;
-                    break;
-                case "MIN":
-                    result = min == Double.MAX_VALUE ? 0 : min;
-                    break;
-                case "MAX":
-                    result = max == Double.MIN_VALUE ? 0 : max;
-                    break;
-                default:
-                    System.out.println("Invalid aggregation type");
-                    System.exit(4);
-                    return;
-            }
-
-            // Format the result appropriately
-            String formattedResult;
-            if (aggregationType.equalsIgnoreCase("AVG")) {
-                // For AVG, use more precision
-                formattedResult = String.format("%.15f", result);
-            } else if (result >= 1e7) {
-                formattedResult = String.format("%.7E", result);
-            } else {
-                formattedResult = String.format("%.2f", result);
-            }
-
-            // Display result with unit
-            String unit = getUnitForMetric(metric);
-            System.out.printf("%s %s%n", formattedResult, unit);
-
-        } catch (IOException e) {
-            System.out.println("Error reading CSV file: " + e.getMessage());
-            System.exit(5);
+        try {
+            LocalDate startDate = LocalDate.parse(startDateStr, DateTimeFormatter.ISO_LOCAL_DATE);
+            LocalDate endDate = LocalDate.parse(endDateStr, DateTimeFormatter.ISO_LOCAL_DATE);
+            double result = processCsv(filePath, startDate, endDate, metric, aggregation);
+            String unit = getUnit(metric);
+            System.out.println(formatResult(result, unit));
+        } catch (Exception e) {
+            System.out.println(e.getMessage());
+            System.exit(1);
         }
     }
 
-    private static String getUnitForMetric(String metric) {
+    private static double processCsv(String filePath, LocalDate startDate, LocalDate endDate, String metric, String aggregation) throws IOException {
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+            // Skip the first 3 lines (headers)
+            br.readLine();
+            br.readLine();
+            br.readLine();
+            String header = br.readLine();
+            String[] headers = header.split(",");
+
+            int metricIndex = getMetricIndex(headers, metric);
+            double aggregationValue = 0;
+            List<Double> values = new ArrayList<>();
+            String line;
+
+            while ((line = br.readLine()) != null) {
+                String[] fields = line.split(",");
+                LocalDate date = LocalDate.parse(fields[0].substring(0, 10));
+                double value = Double.parseDouble(fields[metricIndex]);
+
+                if (date.isEqual(startDate) || date.isAfter(startDate) && date.isBefore(endDate)) {
+                    values.add(value);
+                }
+            }
+
+            return calculateAggregation(values, aggregation);
+        }
+    }
+
+    private static int getMetricIndex(String[] headers, String metric) {
+        switch (metric) {
+            case "temperature_2m":
+                return 1;
+            case "pressure_msl":
+                return 3;
+            case "wind_speed_10m":
+                return 5;
+            case "direct_normal_irradiance_instant":
+                return 8;
+            default:
+                throw new IllegalArgumentException("Invalid metric: " + metric);
+        }
+    }
+
+    private static double calculateAggregation(List<Double> values, String aggregation) {
+        switch (aggregation) {
+            case "SUM":
+                return values.stream().mapToDouble(Double::doubleValue).sum();
+            case "AVG":
+                return values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
+            case "MIN":
+                return values.stream().mapToDouble(Double::doubleValue).min().orElse(0);
+            case "MAX":
+                return values.stream().mapToDouble(Double::doubleValue).max().orElse(0);
+            default:
+                throw new IllegalArgumentException("Invalid aggregation: " + aggregation);
+        }
+    }
+
+    private static String getUnit(String metric) {
         switch (metric) {
             case "temperature_2m":
                 return "°C";
@@ -138,7 +112,20 @@ public class CsvReader {
             case "direct_normal_irradiance_instant":
                 return "W/m²";
             default:
-                return "";
+                throw new IllegalArgumentException("Invalid metric: " + metric);
+        }
+    }
+
+    private static String formatResult(double value, String unit) {
+        DecimalFormat df = new DecimalFormat("0.#####"); // Adjust the format as needed
+        if (value == 0) {
+            return "0.0 " + unit; // Handle special case for zero
+        }
+        // Determine the format: scientific or decimal
+        if (Math.abs(value) >= 1e7 || Math.abs(value) < 1) {
+            return String.format("%.8E %s", value, unit); // Scientific notation
+        } else {
+            return df.format(value) + " " + unit; // Decimal format
         }
     }
 }
