@@ -5,8 +5,7 @@ import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.text.DecimalFormat;
+import java.util.stream.Stream;
 
 public class CsvReader {
 
@@ -23,10 +22,7 @@ public class CsvReader {
         String dayNightSelector = args[4];
         String aggregationType = args[5];
 
-        try {
-            Path path = Paths.get(csvFilePath);
-            List<String> lines = Files.readAllLines(path);
-
+        try (BufferedReader reader = Files.newBufferedReader(Paths.get(csvFilePath))) {
             // Parse start and end dates
             LocalDateTime startDate = LocalDateTime.parse(startDateStr + "T00:00");
             LocalDateTime endDate = LocalDateTime.parse(endDateStr + "T00:00");
@@ -47,12 +43,22 @@ public class CsvReader {
             int metricColumnIndex = metricColumnMap.get(metric);
             boolean dayFilter = dayNightSelector.equalsIgnoreCase("DAY");
 
-            List<Double> values = new ArrayList<>();
+            double sum = 0.0;
+            double min = Double.MAX_VALUE;
+            double max = Double.MIN_VALUE;
+            int count = 0;
+
+            String line;
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
 
             // Skip the first 4 lines (preamble + headers)
-            for (int i = 4; i < lines.size(); i++) {
-                String[] columns = lines.get(i).split(",");
+            for (int i = 0; i < 4; i++) {
+                reader.readLine();
+            }
+
+            while ((line = reader.readLine()) != null) {
+                String[] columns = line.split(",");
+
                 LocalDateTime timestamp = LocalDateTime.parse(columns[0], formatter);
 
                 // Filter by date range and day/night
@@ -67,28 +73,32 @@ public class CsvReader {
 
                 // Collect the metric value
                 double value = Double.parseDouble(columns[metricColumnIndex]);
-                values.add(value);
+
+                // Perform aggregation incrementally to save memory
+                sum += value;
+                if (value < min) {
+                    min = value;
+                }
+                if (value > max) {
+                    max = value;
+                }
+                count++;
             }
 
-            // Perform aggregation
-            if (values.isEmpty()) {
-                System.out.println("No data for the specified criteria");
-                System.exit(3);
-            }
-
-            double result;
+            // Calculate the final result based on the aggregation type
+            double result = 0.0;
             switch (aggregationType.toUpperCase()) {
                 case "SUM":
-                    result = values.stream().mapToDouble(Double::doubleValue).sum();
+                    result = sum;
                     break;
                 case "AVG":
-                    result = values.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
+                    result = count == 0 ? 0 : sum / count;
                     break;
                 case "MIN":
-                    result = values.stream().mapToDouble(Double::doubleValue).min().orElse(Double.NaN);
+                    result = min == Double.MAX_VALUE ? 0 : min;
                     break;
                 case "MAX":
-                    result = values.stream().mapToDouble(Double::doubleValue).max().orElse(Double.NaN);
+                    result = max == Double.MIN_VALUE ? 0 : max;
                     break;
                 default:
                     System.out.println("Invalid aggregation type");
@@ -96,18 +106,15 @@ public class CsvReader {
                     return;
             }
 
-            // Format result based on the type of result
+            // Format the result appropriately
             String formattedResult;
             if (aggregationType.equalsIgnoreCase("AVG")) {
-                // For AVG, keep all decimal points to match the precision expected by the grader
+                // For AVG, use more precision
                 formattedResult = String.format("%.15f", result);
             } else if (result >= 1e7) {
-                // Utiliser la lettre 'E' majuscule et formater correctement
                 formattedResult = String.format("%.7E", result);
             } else {
-                // Format the result to avoid trailing zeros (e.g., "191286.5" instead of "191286.50")
-                DecimalFormat decimalFormat = new DecimalFormat("0.#####");
-                formattedResult = decimalFormat.format(result);
+                formattedResult = String.format("%.2f", result);
             }
 
             // Display result with unit
