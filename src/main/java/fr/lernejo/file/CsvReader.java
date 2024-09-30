@@ -1,6 +1,9 @@
 package fr.lernejo.file;
 
 import java.io.*;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -42,9 +45,9 @@ public class CsvReader {
             int metricColumnIndex = metricColumnMap.get(metric);
             boolean dayFilter = dayNightSelector.equalsIgnoreCase("DAY");
 
-            double sum = 0.0;
-            double min = Double.MAX_VALUE;
-            double max = Double.MIN_VALUE;
+            BigDecimal sum = BigDecimal.ZERO;
+            BigDecimal min = BigDecimal.valueOf(Double.MAX_VALUE);
+            BigDecimal max = BigDecimal.valueOf(Double.MIN_VALUE);
             int count = 0;
 
             String line;
@@ -71,33 +74,37 @@ public class CsvReader {
                 }
 
                 // Collect the metric value
-                double value = Double.parseDouble(columns[metricColumnIndex]);
+                BigDecimal value = new BigDecimal(columns[metricColumnIndex]);
 
                 // Perform aggregation incrementally to save memory
-                sum += value;
-                if (value < min) {
+                sum = sum.add(value);
+                if (value.compareTo(min) < 0) {
                     min = value;
                 }
-                if (value > max) {
+                if (value.compareTo(max) > 0) {
                     max = value;
                 }
                 count++;
             }
 
             // Calculate the final result based on the aggregation type
-            double result = 0.0;
+            BigDecimal result = BigDecimal.ZERO;
             switch (aggregationType.toUpperCase()) {
                 case "SUM":
                     result = sum;
                     break;
                 case "AVG":
-                    result = count == 0 ? 0 : sum / count;
+                    if (count == 0) {
+                        result = BigDecimal.ZERO;
+                    } else {
+                        result = sum.divide(BigDecimal.valueOf(count), 15, RoundingMode.HALF_UP);
+                    }
                     break;
                 case "MIN":
-                    result = min == Double.MAX_VALUE ? 0 : min;
+                    result = min.compareTo(BigDecimal.valueOf(Double.MAX_VALUE)) == 0 ? BigDecimal.ZERO : min;
                     break;
                 case "MAX":
-                    result = max == Double.MIN_VALUE ? 0 : max;
+                    result = max.compareTo(BigDecimal.valueOf(Double.MIN_VALUE)) == 0 ? BigDecimal.ZERO : max;
                     break;
                 default:
                     System.out.println("Invalid aggregation type");
@@ -108,14 +115,14 @@ public class CsvReader {
             // Format the result appropriately
             String formattedResult;
             if (aggregationType.equalsIgnoreCase("AVG")) {
-                // For AVG, use the required precision
-                formattedResult = String.format("%.15f", result);
-            } else if (result >= 1e7) {
+                // For AVG, use more precision
+                formattedResult = result.toPlainString();
+            } else if (result.compareTo(BigDecimal.valueOf(1e7)) >= 0) {
                 // For SUM/MIN/MAX with scientific notation
-                formattedResult = String.format("%.7E", result).replace("E+0", "E").replace("E+0", "E");
+                formattedResult = String.format("%.7E", result).replace("E+0", "E");
             } else {
                 // Standard decimal format without unnecessary zeros
-                formattedResult = String.format("%.1f", result).replaceAll("0*$", "").replaceAll("\\.$", "");
+                formattedResult = result.stripTrailingZeros().toPlainString();
             }
 
             // Display result with unit
