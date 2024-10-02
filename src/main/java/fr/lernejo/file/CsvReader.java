@@ -11,9 +11,15 @@ import java.util.*;
 public class CsvReader {
 
     public static void main(String[] args) {
+        int exitCode = process(args);
+        System.exit(exitCode);
+    }
+
+    // Refactored method to handle the logic and return an exit code
+    public static int process(String[] args) {
         if (args.length != 6) {
             System.out.println("Usage: <path-to-csv> <start-date> <end-date> <metric> <NIGHT/DAY> <SUM/AVG/MIN/MAX>");
-            System.exit(1);
+            return 1;
         }
 
         String csvFilePath = args[0];
@@ -24,11 +30,9 @@ public class CsvReader {
         String aggregationType = args[5];
 
         try (BufferedReader reader = Files.newBufferedReader(Paths.get(csvFilePath))) {
-            // Parse start and end dates
             LocalDateTime startDate = LocalDateTime.parse(startDateStr + "T00:00");
             LocalDateTime endDate = LocalDateTime.parse(endDateStr + "T00:00");
 
-            // Map of metric to the corresponding CSV column
             Map<String, Integer> metricColumnMap = Map.of(
                 "temperature_2m", 1,
                 "pressure_msl", 3,
@@ -38,7 +42,7 @@ public class CsvReader {
 
             if (!metricColumnMap.containsKey(metric)) {
                 System.out.println("Invalid metric");
-                System.exit(2);
+                return 2;
             }
 
             int metricColumnIndex = metricColumnMap.get(metric);
@@ -52,17 +56,14 @@ public class CsvReader {
             String line;
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
 
-            // Skip the first 4 lines (preamble + headers)
             for (int i = 0; i < 4; i++) {
                 reader.readLine();
             }
 
             while ((line = reader.readLine()) != null) {
                 String[] columns = line.split(",");
-
                 LocalDateTime timestamp = LocalDateTime.parse(columns[0], formatter);
 
-                // Filter by date range and day/night
                 if (timestamp.isBefore(startDate) || !timestamp.isBefore(endDate)) {
                     continue;
                 }
@@ -72,10 +73,8 @@ public class CsvReader {
                     continue;
                 }
 
-                // Collect the metric value
                 BigDecimal value = new BigDecimal(columns[metricColumnIndex]);
 
-                // Perform aggregation incrementally to save memory
                 sum = sum.add(value);
                 if (value.compareTo(min) < 0) {
                     min = value;
@@ -86,8 +85,7 @@ public class CsvReader {
                 count++;
             }
 
-            // Calculate the final result based on the aggregation type
-            BigDecimal result = BigDecimal.ZERO;
+            BigDecimal result;
             switch (aggregationType.toUpperCase()) {
                 case "SUM":
                     result = sum;
@@ -107,30 +105,25 @@ public class CsvReader {
                     break;
                 default:
                     System.out.println("Invalid aggregation type");
-                    System.exit(4);
-                    return;
+                    return 4;
             }
 
-            // Format the result appropriately
             String formattedResult;
             if (aggregationType.equalsIgnoreCase("AVG")) {
-                // For AVG, use more precision
                 formattedResult = result.toPlainString();
             } else if (result.compareTo(BigDecimal.valueOf(1e7)) >= 0) {
-                // For SUM/MIN/MAX with scientific notation
                 formattedResult = String.format("%.7E", result).replace("E+0", "E");
             } else {
-                // Standard decimal format without unnecessary zeros
                 formattedResult = result.stripTrailingZeros().toPlainString();
             }
 
-            // Display result with unit
             String unit = getUnitForMetric(metric);
             System.out.printf("%s %s%n", formattedResult, unit);
+            return 0;
 
         } catch (IOException e) {
             System.out.println("Error reading CSV file: " + e.getMessage());
-            System.exit(5);
+            return 5;
         }
     }
 
