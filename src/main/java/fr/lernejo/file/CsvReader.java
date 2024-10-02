@@ -2,7 +2,6 @@ package fr.lernejo.file;
 
 import java.io.*;
 import java.math.BigDecimal;
-import java.math.MathContext;
 import java.math.RoundingMode;
 import java.nio.file.*;
 import java.time.LocalDateTime;
